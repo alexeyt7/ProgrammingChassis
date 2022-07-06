@@ -1,9 +1,4 @@
 #include "main.h"
-#include "okapi/api/chassis/controller/odomChassisController.hpp"
-#include "okapi/impl/control/async/asyncMotionProfileControllerBuilder.hpp"
-#include "pros/imu.hpp"
-#include "pros/llemu.hpp"
-#include "pros/rtos.hpp"
 
 using namespace okapi;
 
@@ -11,10 +6,11 @@ std::shared_ptr<OdomChassisController> chassis =
     ChassisControllerBuilder()
         .withMotors({-2, -4}, {11, 12})
 		.withGains(
-			{0.001, 0.0001, 0.00001}, // Distance controller gains
-			{0.001, 0.0001, 0.00001}, // Turn controller gains
+			{0.001, 0.00015, 0.00001}, // Distance controller gains
+			{0.001, 0.00015, 0.00001}, // Turn controller gains
 			{0.001, 0, 0}  // Angle controller gains (helps drive straight)
 		)
+		.withClosedLoopControllerTimeUtil(10, 1, 250_ms)
 		// Green gearset, 2.75 in wheel diam, 10 in wheel track
         .withDimensions(AbstractMotor::gearset::blue, {{2.75_in, 10.8_in}, int(imev5BlueTPR / 0.75)})
 		.withOdometry()
@@ -30,9 +26,6 @@ std::shared_ptr<OdomChassisController> chassis =
 //     .withOutput(chassis)
 //     .buildMotionProfileController();
 
-// Motor intake(-20);
-pros::IMU imu(15);
-
 double constrainAngle(double angle) {
 	while (angle < -180) {
 		angle += 360;
@@ -42,6 +35,8 @@ double constrainAngle(double angle) {
 	}
 	return angle;
 }
+
+pros::IMU imu(15);
 
 void initialize() {
 	imu.reset();
@@ -59,7 +54,17 @@ void competition_initialize() {}
 void autonomous() {
 	// profileController->setTarget("A");
 	// profileController->waitUntilSettled();
-	chassis->moveDistance(3_ft);
+	QAngle turns[] = {45_deg, 90_deg, 180_deg};
+	double error[3];
+
+	for (int i = 0; i < 8; i++) {
+		for (int j = 0; j < 3; j++) {
+			double initial = imu.get_heading();
+			chassis->turnAngle(turns[j]);
+			error[j] = constrainAngle((imu.get_heading() - initial) - turns[j].convert(degree));
+		}
+		pros::lcd::print(i, "error: %.4f %.4f %.4f", error[0], error[1], error[2]);
+	}
 }
 
 void opcontrol() {
