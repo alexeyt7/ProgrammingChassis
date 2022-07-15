@@ -1,20 +1,45 @@
 #include "main.h"
+#include "okapi/api/chassis/controller/chassisController.hpp"
+#include "okapi/api/chassis/controller/odomChassisController.hpp"
+#include "okapi/api/chassis/model/readOnlyChassisModel.hpp"
+#include "okapi/api/chassis/model/skidSteerModel.hpp"
+#include "okapi/api/odometry/odometry.hpp"
+#include "okapi/api/util/timeUtil.hpp"
+#include "okapi/impl/chassis/controller/chassisControllerBuilder.hpp"
+#include "okapi/impl/util/timeUtilFactory.hpp"
+#include "typhoon/imuOdometry.hpp"
+#include <memory>
 
 using namespace okapi;
 
-std::shared_ptr<OdomChassisController> chassis =
-    ChassisControllerBuilder()
-        .withMotors({-2, -4}, {11, 12})
+IMU imu(15);
+
+TimeUtil timeUtil = TimeUtilFactory::withSettledUtilParams(10, 1, 250_ms);
+
+std::shared_ptr<ChassisController> controller = 
+	ChassisControllerBuilder()
+		.withMotors({-2, -4}, {11, 12})
+		.withDimensions(AbstractMotor::gearset::blue, {{2.75_in, 10.8_in}, int(imev5BlueTPR / 0.75)})
 		.withGains(
-			{0.001, 0.00015, 0.00001}, // Distance controller gains
-			{0.001, 0.00015, 0.00001}, // Turn controller gains
+			{0.001, 0.0002, 0.00001}, // Distance controller gains
+			{0.001, 0.0002, 0.00001}, // Turn controller gains
 			{0.001, 0, 0}  // Angle controller gains (helps drive straight)
 		)
-		.withClosedLoopControllerTimeUtil(10, 1, 250_ms)
-		// Green gearset, 2.75 in wheel diam, 10 in wheel track
-        .withDimensions(AbstractMotor::gearset::blue, {{2.75_in, 10.8_in}, int(imev5BlueTPR / 0.75)})
-		.withOdometry()
-		.buildOdometry();
+		.withDerivativeFilters(
+			std::make_unique<AverageFilter<3>>(), // Distance controller filter
+			std::make_unique<AverageFilter<3>>(), // Turn controller filter
+			std::make_unique<AverageFilter<3>>()  // Angle controller filter
+		)
+		.build();
+
+std::shared_ptr<Odometry> odometry{
+	new IMUOdometry(timeUtil,
+		controller->getModel(),
+		imu,
+		controller->getChassisScales())};
+
+std::shared_ptr<OdomChassisController> chassis{
+	new DefaultOdomChassisController(timeUtil, odometry, controller)};
 
 // std::shared_ptr<AsyncMotionProfileController> profileController =
 //   AsyncMotionProfileControllerBuilder()
@@ -26,17 +51,6 @@ std::shared_ptr<OdomChassisController> chassis =
 //     .withOutput(chassis)
 //     .buildMotionProfileController();
 
-double constrainAngle(double angle) {
-	while (angle < -180) {
-		angle += 360;
-	}
-	while (angle > 180) {
-		angle -= 360;
-	}
-	return angle;
-}
-
-pros::IMU imu(15);
 
 void initialize() {
 	imu.reset();
@@ -54,16 +68,9 @@ void competition_initialize() {}
 void autonomous() {
 	// profileController->setTarget("A");
 	// profileController->waitUntilSettled();
-	QAngle turns[] = {45_deg, 90_deg, 180_deg};
-	double error[3];
-
-	for (int i = 0; i < 8; i++) {
-		for (int j = 0; j < 3; j++) {
-			double initial = imu.get_heading();
-			chassis->turnAngle(turns[j]);
-			error[j] = constrainAngle((imu.get_heading() - initial) - turns[j].convert(degree));
-		}
-		pros::lcd::print(i, "error: %.4f %.4f %.4f", error[0], error[1], error[2]);
+	for (int i = 0; i < 4; i++) {
+		chassis->moveDistance(1_ft);
+		chassis->turnAngle(90_deg);
 	}
 }
 
@@ -73,6 +80,8 @@ void opcontrol() {
 	// ControllerButton runOuttake(ControllerDigital::R1);
 	// ControllerButton runIntake(ControllerDigital::R2);
 
+	chassis->startOdomThread();
+
 	while (true) {
 		chassis->getModel()->curvature(
 				primary.getAnalog(ControllerAnalog::leftY),
@@ -80,6 +89,11 @@ void opcontrol() {
 		if (runAuto.changedToPressed()) {
 			autonomous();
 		}
+
+		OdomState state = chassis->getState();
+		pros::lcd::print(0, "%f", state.x.convert(foot));
+		pros::lcd::print(1, "%f", state.y.convert(foot));
+		pros::lcd::print(2, "%f", state.theta.convert(degree));
 		// if (runIntake.isPressed()) {
 		// 	intake.controllerSet(1);
 		// } else if (runOuttake.isPressed()) {
