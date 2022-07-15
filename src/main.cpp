@@ -32,14 +32,12 @@ std::shared_ptr<ChassisController> controller =
 		)
 		.build();
 
-std::shared_ptr<Odometry> odometry{
-	new IMUOdometry(timeUtil,
-		controller->getModel(),
-		imu,
-		controller->getChassisScales())};
+auto odometry = std::make_shared<IMUOdometry>(timeUtil,
+	controller->getModel(),
+	imu,
+	controller->getChassisScales());
 
-std::shared_ptr<OdomChassisController> chassis{
-	new DefaultOdomChassisController(timeUtil, odometry, controller)};
+auto chassis = std::make_shared<DefaultOdomChassisController>(timeUtil, odometry, controller);
 
 // std::shared_ptr<AsyncMotionProfileController> profileController =
 //   AsyncMotionProfileControllerBuilder()
