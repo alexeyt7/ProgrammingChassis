@@ -40,6 +40,8 @@ auto ramseteController = std::make_shared<RamseteController>(
     2, 0.7);
 
 void initialize() {
+	pros::lcd::initialize();
+	pros::lcd::print(0, "Initializing, please wait...");
 	imu.reset();
 	uint32_t calibrationStart = pros::millis();
 	pros::lcd::initialize();
@@ -48,6 +50,7 @@ void initialize() {
 	chassis->startOdomThread();
 	ramseteController->startThread();
 	pros::Task::delay_until(&calibrationStart, 2000);
+	pros::lcd::clear_line(0);
 }
 
 void disabled() {}
