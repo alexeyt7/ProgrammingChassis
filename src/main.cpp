@@ -3,14 +3,15 @@
 #include <memory>
 
 #include "typhoon/imuOdometry.hpp"
+#include "typhoon/ramseteController.hpp"
 
 using namespace okapi;
 
 IMU imu(15);
 
-TimeUtil timeUtil = TimeUtilFactory::withSettledUtilParams(10, 1, 250_ms);
+TimeUtil timeUtil = TimeUtilFactory::withSettledUtilParams(1, 1, 250_ms);
 
-std::shared_ptr<ChassisController> controller =
+auto controller =
     ChassisControllerBuilder()
         .withMotors({-2, -4}, {11, 12})
         .withDimensions(AbstractMotor::gearset::blue,
@@ -33,36 +34,27 @@ auto odometry = std::make_shared<IMUOdometry>(
 auto chassis = std::make_shared<DefaultOdomChassisController>(
     timeUtil, odometry, controller);
 
-// std::shared_ptr<AsyncMotionProfileController> profileController =
-//   AsyncMotionProfileControllerBuilder()
-//     .withLimits({
-//       1.0, // Maximum linear velocity of the Chassis in m/s
-//       2.0, // Maximum linear acceleration of the Chassis in m/s/s
-//       10.0 // Maximum linear jerk of the Chassis in m/s/s/s
-//     })
-//     .withOutput(chassis)
-//     .buildMotionProfileController();
+auto ramseteController = std::make_shared<RamseteController>(
+    timeUtil, PathfinderLimits{1, 2, 10}, controller->getModel(),
+    controller->getChassisScales(), controller->getGearsetRatioPair(), odometry,
+    2, 0.7);
 
 void initialize() {
 	imu.reset();
 	uint32_t calibrationStart = pros::millis();
 	pros::lcd::initialize();
-	// profileController->generatePath({
-	// 	{0_ft, 0_ft, 0_deg},
-	// 	{3_ft, 1_ft, 90_deg}},
-	// 	"A");
+	ramseteController->generatePath({{0_ft, 0_ft, 0_deg}, {2_ft, -1_ft, -90_deg}},
+	                                "A");
+	chassis->startOdomThread();
+	ramseteController->startThread();
 	pros::Task::delay_until(&calibrationStart, 2000);
 }
 
 void disabled() {}
 void competition_initialize() {}
 void autonomous() {
-	// profileController->setTarget("A");
-	// profileController->waitUntilSettled();
-	for (int i = 0; i < 4; i++) {
-		chassis->moveDistance(1_ft);
-		chassis->turnAngle(90_deg);
-	}
+	ramseteController->setTarget("A");
+	ramseteController->waitUntilSettled();
 }
 
 void opcontrol() {
@@ -70,8 +62,6 @@ void opcontrol() {
 	ControllerButton runAuto(ControllerDigital::A);
 	// ControllerButton runOuttake(ControllerDigital::R1);
 	// ControllerButton runIntake(ControllerDigital::R2);
-
-	chassis->startOdomThread();
 
 	while (true) {
 		chassis->getModel()->curvature(primary.getAnalog(ControllerAnalog::leftY),
