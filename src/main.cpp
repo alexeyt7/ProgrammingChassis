@@ -8,14 +8,15 @@
 using namespace okapi;
 
 IMU imu(16);
-MotorGroup intake{-19, 20};
-// MotorGroup flywheel{-14, 15};
+MotorGroup intake{-5, 15};
+MotorGroup catapult{-4, 14};
+ADIButton catapultLimit{'A'};
 
 TimeUtil timeUtil = TimeUtilFactory::withSettledUtilParams(1, 1, 250_ms);
 
 auto controller =
     ChassisControllerBuilder()
-        .withMotors({-2, -4}, {11, 12})
+        .withMotors({-2, -3}, {12, 13})
         .withDimensions(AbstractMotor::gearset::blue,
                         {{2.75_in, 10.8_in}, int(imev5BlueTPR / 0.75)})
         .withGains(
@@ -41,16 +42,31 @@ auto ramseteController = std::make_shared<RamseteController>(
     controller->getChassisScales(), controller->getGearsetRatioPair(), odometry,
     2, 0.7);
 
+pros::Task launchCatapult{[] {
+	while (pros::Task::notify_take(true, TIMEOUT_MAX)) {
+		while (catapultLimit.isPressed()) {
+			catapult.moveVoltage(12000);
+		}
+		catapult.moveVoltage(0);
+	}
+}};
+
 void initialize() {
 	pros::lcd::initialize();
 	pros::lcd::print(0, "Initializing, please wait...");
 	imu.reset();
 	uint32_t calibrationStart = pros::millis();
-	pros::lcd::initialize();
 	ramseteController->generatePath({{0_in, 0_ft, 0_deg}, {4_in, 0_ft, 0_deg}},
 	                                "fwd");
 	chassis->startOdomThread();
 	ramseteController->startThread();
+
+	catapult.setBrakeMode(AbstractMotor::brakeMode::brake);
+	while (!catapultLimit.isPressed()) {
+		catapult.moveVoltage(12000);
+	}
+	catapult.moveVoltage(0);
+
 	pros::Task::delay_until(&calibrationStart, 2000);
 	pros::lcd::clear_line(0);
 }
@@ -58,16 +74,34 @@ void initialize() {
 void disabled() {}
 void competition_initialize() {}
 void autonomous() {
+#if far
+	launchCatapult.notify();
+	pros::delay(2000);
 	// ramseteController->setTarget("fwd", true);
 	// ramseteController->waitUntilSettled();
-	chassis->getChassisController()->moveDistance(-6_in);
+	chassis->getChassisController()->moveDistance(24_in);
+	chassis->getChassisController()->turnAngle(100_deg);
+	chassis->getChassisController()->moveDistanceAsync(4_in);
+	pros::delay(500);
 
-	intake.moveRelative(-90, 60);
+	intake.moveRelative(90, 60);
+	pros::delay(1000);
+	chassis->getChassisController()->moveDistance(-4_in);
+#else
+	chassis->getChassisController()->moveDistanceAsync(4_in);
+	pros::delay(500);
+
+	intake.moveRelative(90, 60);
 	pros::delay(1000);
 
-	chassis->getChassisController()->moveDistance(6_in);
-	// ramseteController->setTarget("fwd");
-	// ramseteController->waitUntilSettled();
+	chassis->getChassisController()->moveDistance(-4_in);
+	chassis->getChassisController()->turnAngle(100_deg);
+
+	chassis->getChassisController()->moveDistance(-48_in);
+
+	launchCatapult.notify();
+	pros::delay(2000);
+#endif
 }
 
 void opcontrol() {
@@ -89,18 +123,22 @@ void opcontrol() {
 		pros::lcd::print(1, "%f", state.y.convert(foot));
 		pros::lcd::print(2, "%f", state.theta.convert(degree));
 		if (primary.getDigital(ControllerDigital::R2)) {
-			intake.moveVoltage(12000);
+			intake.moveVoltage(12000 * 0.7);
 		} else if (primary.getDigital(ControllerDigital::R1)) {
-			intake.moveVoltage(-12000);
+			intake.moveVoltage(-12000 * 0.7);
 		} else {
 			intake.moveVoltage(0);
 		}
 
-		// if (primary.getDigital(ControllerDigital::L1)) {
-		// 	flywheel.moveVoltage(12000);
-		// } else {
-		// 	flywheel.moveVoltage(0);
-		// }
+		if (primary.getDigital(ControllerDigital::L1)) {
+			launchCatapult.notify();
+		}
+
+		if (!catapultLimit.isPressed()) {
+			catapult.moveVoltage(12000);
+		} else {
+			catapult.moveVoltage(0);
+		}
 		pros::delay(20);
 	}
 }
