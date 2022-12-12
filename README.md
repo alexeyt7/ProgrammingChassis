@@ -7,6 +7,6 @@ We currently plan for our robot to be able to make shots the full length of the 
 
 - [x] UKF implementation
 - [x] Sensor integration
-- [] Robot + sensor model functions
-- [] UKF tuning
-- [] Align to goal method
+- [ ] Robot + sensor model functions
+- [ ] UKF tuning
+- [ ] Align to goal method
