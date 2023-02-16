@@ -76,6 +76,16 @@ void opcontrol(void);
  * You can add C++-only headers here
  */
 //#include <iostream>
+
+enum class MotorState { STOP, FORWARD, REVERSE };
+enum class AllianceColor { RED, BLUE };
+
+struct Inputs {
+	double thrust, turn;
+	double intake;
+	int32_t flywheel;
+};
+
 #endif
 
 #endif  // _PROS_MAIN_H_

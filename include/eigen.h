@@ -5,6 +5,8 @@
  */
 #define EIGEN_DONT_VECTORIZE
 #include "Eigen/Dense"
+#include "Eigen/StdVector"
+
 
 /* wpi aliases to make declarations shorter */
 template <int Size>

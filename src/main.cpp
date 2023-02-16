@@ -1,22 +1,43 @@
 #include "main.h"
 
 #include <memory>
+#include <sstream>
 
-#include "typhoon/imuOdometry.hpp"
-#include "typhoon/ramseteController.hpp"
+#include "replay.hpp"
 
 using namespace okapi;
 
-IMU imu(16);
-MotorGroup intake{-5, 15};
-MotorGroup catapult{-4, 14};
-ADIButton catapultLimit{'A'};
+const double MAX_VOLTAGE = 12000;  // millivolts
+
+const int32_t FLYWHEEL_TARGET_LOW = 410;
+const int32_t FLYWHEEL_TARGET_HIGH = 500;
+
+const int32_t BLUE_HUE = 200;
+const int32_t RED_HUE = 0;
+
+bool isCompetition = false;
+AllianceColor color = AllianceColor::RED;
+
+IMU imu{13};
+DistanceSensor leftDistance{11};
+DistanceSensor rightDistance{20};
+Potentiometer kicker{'A'};
 
 TimeUtil timeUtil = TimeUtilFactory::withSettledUtilParams(1, 1, 250_ms);
 
-auto controller =
+MotorGroup flywheel{-4, 5};
+MotorGroup indexer{3};
+MotorGroup intake{-2};
+
+MotorGroup leftDrive{-6, -7};
+MotorGroup rightDrive{8, 9};
+OpticalSensor colorSensor{10};
+
+Recording recording{};
+
+auto chassis =
     ChassisControllerBuilder()
-        .withMotors({-2, -3}, {12, 13})
+        .withMotors(leftDrive, rightDrive)
         .withDimensions(AbstractMotor::gearset::blue,
                         {{2.75_in, 10.8_in}, int(imev5BlueTPR / 0.75)})
         .withGains(
@@ -31,114 +52,159 @@ auto controller =
             )
         .build();
 
-auto odometry = std::make_shared<IMUOdometry>(
-    timeUtil, controller->getModel(), imu, controller->getChassisScales());
-
-auto chassis = std::make_shared<DefaultOdomChassisController>(
-    timeUtil, odometry, controller);
-
-auto ramseteController = std::make_shared<RamseteController>(
-    timeUtil, PathfinderLimits{1, 2, 10}, controller->getModel(),
-    controller->getChassisScales(), controller->getGearsetRatioPair(), odometry,
-    2, 0.7);
-
-pros::Task launchCatapult{[] {
-	while (pros::Task::notify_take(true, TIMEOUT_MAX)) {
-		while (catapultLimit.isPressed()) {
-			catapult.moveVoltage(12000);
-		}
-		catapult.moveVoltage(0);
+void resetIndexer() {
+	while (kicker.get() > 3120) {
+		indexer.moveVoltage(MAX_VOLTAGE * 0.3);
+		pros::delay(20);
 	}
-}};
+	while (kicker.get() < 3120) {
+		indexer.moveVoltage(MAX_VOLTAGE * -0.3);
+		pros::delay(20);
+	}
+	indexer.moveVoltage(0);
+}
+
+int angleDifferenceAbs(int angle1, int angle2) {
+	int difference = angle1 - angle2;
+	while (difference > 180) {
+		difference -= 360;
+	}
+	while (difference < -180) {
+		difference += 360;
+	}
+	return abs(difference);
+}
+
+AllianceColor rollerColor() {
+	int hue = colorSensor.getHue();
+	int distRed = angleDifferenceAbs(RED_HUE, hue);
+	int distBlue = angleDifferenceAbs(BLUE_HUE, hue);
+	return distRed < distBlue ? AllianceColor::RED : AllianceColor::BLUE;
+}
 
 void initialize() {
 	pros::lcd::initialize();
 	pros::lcd::print(0, "Initializing, please wait...");
 	imu.reset();
 	uint32_t calibrationStart = pros::millis();
-	ramseteController->generatePath({{0_in, 0_ft, 0_deg}, {4_in, 0_ft, 0_deg}},
-	                                "fwd");
-	chassis->startOdomThread();
-	ramseteController->startThread();
-
-	catapult.setBrakeMode(AbstractMotor::brakeMode::brake);
-	while (!catapultLimit.isPressed()) {
-		catapult.moveVoltage(12000);
-	}
-	catapult.moveVoltage(0);
+	flywheel.setGearing(AbstractMotor::gearset::blue);
+	flywheel.setBrakeMode(AbstractMotor::brakeMode::coast);
+	indexer.setBrakeMode(AbstractMotor::brakeMode::brake);
 
 	pros::Task::delay_until(&calibrationStart, 2000);
+	resetIndexer();
 	pros::lcd::clear_line(0);
+	pros::lcd::print(0, "Initialization finished!");
 }
 
 void disabled() {}
-void competition_initialize() {}
-void autonomous() {
-#if far
-	launchCatapult.notify();
-	pros::delay(2000);
-	// ramseteController->setTarget("fwd", true);
-	// ramseteController->waitUntilSettled();
-	chassis->getChassisController()->moveDistance(24_in);
-	chassis->getChassisController()->turnAngle(100_deg);
-	chassis->getChassisController()->moveDistanceAsync(4_in);
-	pros::delay(500);
+void competition_initialize() {
+	isCompetition = true;
+}
+void autonomous() {}
 
-	intake.moveRelative(90, 60);
-	pros::delay(1000);
-	chassis->getChassisController()->moveDistance(-4_in);
-#else
-	chassis->getChassisController()->moveDistanceAsync(4_in);
-	pros::delay(500);
+pros::Task kickDisk{[] {
+	while (pros::Task::notify_take(true, TIMEOUT_MAX)) {
+		while (kicker.get() > 2500) {
+			indexer.moveVoltage(MAX_VOLTAGE * 0.3);
+			pros::delay(20);
+		}
+		while (kicker.get() < 3120) {
+			indexer.moveVoltage(MAX_VOLTAGE * -0.3);
+			pros::delay(20);
+		}
 
-	intake.moveRelative(90, 60);
-	pros::delay(1000);
+		indexer.moveVoltage(0);
+		pros::delay(1000);
+	}
+}};
 
-	chassis->getChassisController()->moveDistance(-4_in);
-	chassis->getChassisController()->turnAngle(100_deg);
+// pros::Task setRoller {
+// 	[] {}
+// }
 
-	chassis->getChassisController()->moveDistance(-48_in);
-
-	launchCatapult.notify();
-	pros::delay(2000);
-#endif
+void applyInputs(Inputs& input) {
+	chassis->getModel()->curvature(input.thrust, input.turn, 0.01);
+	if (input.flywheel > 0) {
+		flywheel.moveVelocity(input.flywheel);
+	} else {
+		flywheel.moveVoltage(0);
+	}
+	if (input.flywheel != 0 && flywheel.getActualVelocity() > input.flywheel) {
+		kickDisk.notify();
+	}
+	intake.moveVoltage(MAX_VOLTAGE * input.intake);
 }
 
-void opcontrol() {
-	Controller primary;
+// void playRecording() {
+// 	for (int i = 0; i < recording.length(); i++) {
+// 		uint32_t loopStart = pros::millis();
 
-	intake.tarePosition();
+// 		Inputs u = recording.getFrame(i, {0, 0, 0});
+// 		applyInputs(u);
+// 		pros::Task::delay_until(&loopStart, 50);
+// 	}
+// }
+
+void opcontrol() {
+	Controller primary{};
+	bool isRecording = false;
+	bool recordingFinished = false;
 
 	while (true) {
-		chassis->getModel()->curvature(primary.getAnalog(ControllerAnalog::leftY),
-		                               primary.getAnalog(ControllerAnalog::rightX));
-		if (primary.getDigital(ControllerDigital::A)) {
-			autonomous();
+		uint32_t loopStart = pros::millis();
+		Inputs input{};
+		bool shift = primary.getDigital(ControllerDigital::L1);
+
+		if (!isCompetition) {
+			if (!isRecording && primary.getDigital(ControllerDigital::B)) {
+				// recording.clear();
+				isRecording = true;
+				primary.setText(0, 0, "recording!");
+			}
+			if (primary.getDigital(ControllerDigital::Y)) {
+				primary.setText(0, 0, "building! ");
+				isRecording = false;
+				// recording.buildModel();
+				primary.setText(0, 0, "stopped!  ");
+			}
+			if (primary.getDigital(ControllerDigital::A)) {
+				primary.setText(0, 0, "replaying!  ");
+				// playRecording();
+				primary.setText(0, 0, "finished!  ");
+			}
 		}
 
-		pros::lcd::print(3, "intake: %5.f", intake.getPosition());
+		input.thrust = primary.getAnalog(ControllerAnalog::leftY);
+		input.turn = primary.getAnalog(ControllerAnalog::rightX);
 
-		OdomState state = chassis->getState();
-		pros::lcd::print(0, "%f", state.x.convert(foot));
-		pros::lcd::print(1, "%f", state.y.convert(foot));
-		pros::lcd::print(2, "%f", state.theta.convert(degree));
 		if (primary.getDigital(ControllerDigital::R2)) {
-			intake.moveVoltage(12000 * 0.7);
-		} else if (primary.getDigital(ControllerDigital::R1)) {
-			intake.moveVoltage(-12000 * 0.7);
-		} else {
-			intake.moveVoltage(0);
+			input.flywheel = shift ? FLYWHEEL_TARGET_HIGH : FLYWHEEL_TARGET_LOW;
+		}
+		if (primary.getDigital(ControllerDigital::L2)) {
+			input.intake = shift ? -1 : 1;
 		}
 
-		if (primary.getDigital(ControllerDigital::L1)) {
-			launchCatapult.notify();
+		if (primary.getDigital(ControllerDigital::X)) {
+			kickDisk.notify();
 		}
 
-		if (!catapultLimit.isPressed()) {
-			catapult.moveVoltage(12000);
+		applyInputs(input);
+
+		if (rollerColor() == AllianceColor::RED) {
+			primary.setText(0, 0, "RED ");
 		} else {
-			catapult.moveVoltage(0);
+			primary.setText(0, 0, "BLUE");
 		}
-		pros::delay(20);
+		pros::lcd::print(1, "%f %f", leftDistance.get(), rightDistance.get());
+
+		if (isRecording) {
+			recording.addFrame(input,
+			                   {leftDistance.get(), rightDistance.get(), imu.get()});
+		}
+		pros::lcd::print(2, "%f", kicker.get());
+		pros::lcd::print(3, "%f", flywheel.getActualVelocity() * 6);
+
+		pros::Task::delay_until(&loopStart, 50);
 	}
 }
