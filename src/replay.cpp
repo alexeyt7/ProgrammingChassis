@@ -32,33 +32,32 @@ void Recording::addFrame(Inputs input, OutputVector output) {
 	outputs_.push_back(output);
 }
 
-// void Recording::buildModel() {
-// 	std::vector<double> inputVector{};
-// 	inputVector.reserve(length());
+void Recording::buildModel() {
+ 	std::vector<double> inputVector{};
+ 	inputVector.reserve(length());
 
-// 	for (int i = 0; i < length(); i++) {
-// 		inputVector[i] = inputs_[i][0];
-// 	}
-// 	model_.row(0) = regress(inputVector, outputs_);
-// 	for (int i = 0; i < length(); i++) {
-// 		inputVector[i] = inputs_[i][1];
-// 	}
-// 	model_.row(1) = regress(inputVector, outputs_);
-// }
+ 	for (int i = 0; i < length(); i++) {
+ 		inputVector[i] = inputs_[i][0];
+ 	}
+ 	model_.row(0) = regress(inputVector, outputs_);
+ 	for (int i = 0; i < length(); i++) {
+ 		inputVector[i] = inputs_[i][1];
+ 	}
+ 	model_.row(1) = regress(inputVector, outputs_);
+}
 
-// Matrixd<1, OUTPUTS> Recording::regress(std::vector<double> input,
-//                                        std::vector<OutputVector> outputs)
-// {
-// 	Eigen::Matrix3Xd U = Eigen::MatrixXd(3, outputs.size());
-// 	for (int i = 0; i < length(); i++) {
-// 		U.col(i) = outputs[i];
-// 	}
-// 	Eigen::VectorXd y = Eigen::VectorXd(outputs.size());
-// 	for (int i = 0; i < length(); i++) {
-// 		y(i) = input[i];
-// 	}
-// 	return U.jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(y);
-// }
+Matrixd<1, OUTPUTS> Recording::regress(std::vector<double> input,
+                                       std::vector<OutputVector> outputs) {
+ 	Eigen::Matrix3Xd U = Eigen::MatrixXd(3, outputs.size());
+ 	for (int i = 0; i < length(); i++) {
+ 		U.col(i) = outputs[i];
+ 	}
+ 	Eigen::VectorXd y = Eigen::VectorXd(outputs.size());
+ 	for (int i = 0; i < length(); i++) {
+ 		y(i) = input[i];
+ 	}
+ 	return U.jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(y);
+}
 
 Inputs Recording::getFrame(int i, OutputVector y) {
 	Inputs base = inputs_[i];
